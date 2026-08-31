@@ -1,0 +1,33 @@
+name: Register
+description: Register once at the start of term (safe to repeat). Required before requesting any repo.
+title: "register: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Register
+        Do this **once** per term. Your GitHub username is captured automatically —
+        you do not type it. After you submit, you'll get a confirmation comment.
+  - type: input
+    id: fullname
+    attributes:
+      label: Name
+      description: Your full name (for the class roster).
+      placeholder: e.g. Alice Kim
+    validations:
+      required: true
+  - type: input
+    id: email
+    attributes:
+      label: Email
+      description: Your school email.
+      placeholder: e.g. akim@student.avc.edu
+    validations:
+      required: true
+  - type: input
+    id: join_code
+    attributes:
+      label: Code
+      description: Auto-filled from your Canvas class link — just submit. (Or type the class code.)
+    validations:
+      required: true

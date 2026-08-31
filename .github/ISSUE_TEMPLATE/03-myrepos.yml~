@@ -1,0 +1,17 @@
+name: My repos
+description: List every assignment repo you've been given (all courses). Username captured automatically.
+title: "myrepos: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### See all your repos
+        Check the box and **Submit** — you'll get a comment listing every repo you have, with links.
+        Your GitHub username is captured automatically (nothing else to fill in).
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: List my repos
+      options:
+        - label: Show all repos I've been given
+          required: true

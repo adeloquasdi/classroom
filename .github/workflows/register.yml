@@ -1,0 +1,99 @@
+name: register
+
+# ⚠️ Triggers/auto-writes: read playbook/automation-map.md before changing 'on:' or adding a commit-back.
+#    (GITHUB_TOKEN commits don't re-trigger workflows; ORG_PAT/PAT commits DO → loop risk.)
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write   # commit roster/<user>.json
+  issues: write     # comment + close
+
+# one register at a time per opener (stops double-fire); cross-user races handled by push-retry
+concurrency:
+  group: register-${{ github.event.issue.user.login }}
+  cancel-in-progress: false
+
+jobs:
+  register:
+    if: startsWith(github.event.issue.title, 'register:')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Process registration
+        env:
+          # ALL user-controlled values arrive as env vars — never inline ${{ }} in run: (injection-safe, #12)
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          JOIN_CODE: ${{ secrets.JOIN_CODE }}   # the class code lives in secrets, NOT public config.json
+          ORG_PAT: ${{ secrets.ORG_PAT }}       # to write roster to the PRIVATE data repo
+          ISSUE: ${{ github.event.issue.number }}
+          USERNAME: ${{ github.event.issue.user.login }}
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+
+          # extract a single-line field value by its "### <Label>" header (inputs are one-line → no forged headers)
+          field() {
+            printf '%s\n' "$BODY" | awk -v lbl="### $1" '
+              $0==lbl {f=1; next}
+              f && NF {gsub(/\r/,""); print; exit}
+            '
+          }
+
+          NAME="$(field Name)"
+          EMAIL="$(field Email)"
+          CODE="$(field Code)"
+          UKEY="$(printf '%s' "$USERNAME" | tr '[:upper:]' '[:lower:]')"
+          EXPECTED="$JOIN_CODE"
+
+          # redact the PII body (name/email), comment the reason, then close (keeps a record for the student, no PII)
+          fail() {
+            gh issue edit "$ISSUE" --body "Registration processed — personal details redacted for privacy." >/dev/null 2>&1 || true
+            gh issue comment "$ISSUE" --body "$1"
+            gh issue close "$ISSUE"
+            exit 0
+          }
+
+          # --- gate: class join code ---
+          [ -n "$CODE" ] && [ "$CODE" = "$EXPECTED" ] || \
+            fail "❌ Registration failed: wrong or missing class **code**. Get it from your Canvas course page, then open a new Register issue."
+          [ -n "$NAME" ] && [ -n "$EMAIL" ] || \
+            fail "❌ Registration failed: **name** and **email** are required."
+
+          # --- write roster to the PRIVATE data repo via Contents API (key-per-file upsert, ORG_PAT) ---
+          DATA_REPO="${GH_REPO}-admin"   # e.g. AVC-CS/classroom-admin (PRIVATE back-office: roster/log/report)
+          STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CONTENT_B64="$(jq -n --arg u "$UKEY" --arg n "$NAME" --arg e "$EMAIL" --arg t "$STAMP" \
+            '{username:$u, name:$n, email:$e, registered:$t}' | base64 -w0)"
+          # A Contents-API PUT is a COMMIT, and a commit takes a BRANCH-HEAD lock: concurrent
+          # registrations all read the same head and every loser gets HTTP 409. One file per student
+          # does NOT avoid it — the contention is on the branch, not the file (2026-07-19: the same
+          # shape killed 21 request runs). Registration peaks at term start, i.e. exactly when this
+          # is most likely. Unguarded under `set -e` a 409 kills the run BEFORE the confirmation
+          # comment below, so the student is told nothing, assumes failure, and retries by hand —
+          # which adds more load than the retry does.
+          for attempt in 1 2 3 4; do
+            # re-read the sha INSIDE the loop: retrying with the stale one just 409s again
+            SHA="$(GH_TOKEN="$ORG_PAT" gh api "repos/$DATA_REPO/contents/roster/$UKEY.json" --jq .sha 2>/dev/null || true)"
+            ERR="$(GH_TOKEN="$ORG_PAT" gh api -X PUT "repos/$DATA_REPO/contents/roster/$UKEY.json" \
+                     -f message="register: $UKEY" -f content="$CONTENT_B64" ${SHA:+-f sha="$SHA"} 2>&1 >/dev/null)" \
+              && { WROTE=1; break; }
+            # ONLY a head collision is worth retrying. Anything else (bad token, repo gone, bad
+            # payload) must surface now instead of hiding behind four "the list was busy" messages.
+            printf '%s' "$ERR" | grep -qE '409|does not match|but expected' \
+              || fail "⚠️ Registration could not be saved — please show this to your instructor. Nothing is wrong on your side."
+            # jitter: a fixed backoff makes 30 simultaneous registrations wake up together and
+            # recreate the very collision we are backing off from
+            sleep $(( attempt * 2 + RANDOM % 4 ))
+          done
+          [ "${WROTE:-0}" = "1" ] \
+            || fail "⚠️ The class list was busy and your registration could not be saved. Please open a new Register issue in a minute — this is not your mistake."
+
+          # --- redact PII from the public issue body, confirm (username only), close (keeps record, no PII) ---
+          gh issue edit "$ISSUE" --body "Registration processed — personal details redacted for privacy." >/dev/null
+          gh issue comment "$ISSUE" --body "✅ Registered as \`$UKEY\`. You can now request assignment repos from your Canvas course link."
+          gh issue close "$ISSUE"

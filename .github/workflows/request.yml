@@ -1,0 +1,192 @@
+name: request
+
+# ⚠️ Triggers/auto-writes: read playbook/automation-map.md before changing 'on:' or adding a commit-back.
+#    (GITHUB_TOKEN commits don't re-trigger workflows; ORG_PAT/PAT commits DO → loop risk.)
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write   # commit log/<repo>.json
+  issues: write     # comment + close
+
+# per-issue (not per-user): different assignments → different repos → safe to run in parallel.
+# (per-user would queue then cancel a student's simultaneous A00+A22 — one would be silently dropped.)
+concurrency:
+  group: request-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    if: startsWith(github.event.issue.title, 'request-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Process request
+        env:
+          # in-repo ops (comment/close/log commit) use the auto token; cross-repo (create/collab) uses ORG_PAT
+          GH_TOKEN: ${{ github.token }}
+          ORG_PAT: ${{ secrets.ORG_PAT }}
+          GH_REPO: ${{ github.repository }}
+          ORG: ${{ github.repository_owner }}
+          ISSUE: ${{ github.event.issue.number }}
+          USERNAME: ${{ github.event.issue.user.login }}
+          TITLE: ${{ github.event.issue.title }}
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+
+          field() {
+            printf '%s\n' "$BODY" | awk -v lbl="### $1" '
+              $0==lbl {f=1; next}
+              f && NF {gsub(/\r/,""); print; exit}
+            '
+          }
+          # close (not delete): the success comment carries the student's repo + invite link — keep it visible.
+          # request issues hold no PII (just the assignment); residual exposure = username + assignment (proportionate).
+          fail() { gh issue comment "$ISSUE" --body "$1"; gh issue close "$ISSUE"; exit 0; }
+
+          UKEY="$(printf '%s' "$USERNAME" | tr '[:upper:]' '[:lower:]')"
+          # course from title prefix "request-<course>:" (no course hardcoded, #17)
+          COURSE="$(printf '%s' "$TITLE" | sed -n 's/^request-\([^:]*\):.*/\1/p')"
+          ASSIGN="$(field Assignment)"
+          # optional form input — consulted ONLY by the quiz code gate further down. A blank
+          # Issue-Forms input arrives as the literal "_No response_", not as an empty line.
+          CODE="$(field 'Access code')"
+          if [ "$CODE" = "_No response_" ]; then CODE=""; fi
+
+          [ -n "$COURSE" ] || fail "❌ Could not read the course from the issue title. Use the course's Request link from Canvas."
+
+          # per-school deploy: this repo carries its OWN single config.json (stamped from the template)
+          CONFIG="config.json"
+          [ -f "$CONFIG" ] || fail "⚠️ Setup error: this repo has no config.json yet (instructor: add it after deploy)."
+
+          jq -e --arg c "$COURSE" '.courses[$c]' "$CONFIG" >/dev/null 2>&1 \
+            || fail "❌ Unknown course \`$COURSE\`."
+
+          # --- must be registered (roster lives in the PRIVATE data repo, read via ORG_PAT) ---
+          DATA_REPO="${GH_REPO}-admin"
+          ROSTER="$(GH_TOKEN="$ORG_PAT" gh api "repos/$DATA_REPO/contents/roster/$UKEY.json" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)"
+          [ -n "$ROSTER" ] \
+            || fail "❌ You're not registered yet. Register first: https://github.com/$GH_REPO/issues/new?template=01-register.yml (use your Canvas class code), then request again."
+
+          # --- assignment must be in config; value = template string (always open) OR object with time gate ---
+          ENTRY="$(jq -c --arg c "$COURSE" --arg a "$ASSIGN" '.courses[$c].assignments[$a] // empty' "$CONFIG")"
+          [ -n "$ENTRY" ] || fail "❌ Assignment \`$ASSIGN\` is not offered for $COURSE."
+
+          if [ "$(jq -r 'type' <<<"$ENTRY")" = "string" ]; then
+            TEMPLATE="$(jq -r '.' <<<"$ENTRY")"          # plain assignment — always available
+          else
+            TEMPLATE="$(jq -r '.template' <<<"$ENTRY")"  # gated assignment (e.g. exam/quiz)
+            FROM="$(jq -r '.available_from // empty' <<<"$ENTRY")"
+            UNTIL="$(jq -r '.available_until // empty' <<<"$ENTRY")"
+            NOW="$(date -u +%s)"
+            if [ -n "$FROM" ] && [ "$NOW" -lt "$(date -d "$FROM" +%s)" ]; then
+              fail "⏳ \`$ASSIGN\` is not open yet — opens **$FROM**. Request again then."
+            fi
+            if [ -n "$UNTIL" ] && [ "$NOW" -gt "$(date -d "$UNTIL" +%s)" ]; then
+              fail "🔒 \`$ASSIGN\` is closed (was open until **$UNTIL**)."
+            fi
+          fi
+          [ -n "$TEMPLATE" ] && [ "$TEMPLATE" != "null" ] \
+            || fail "⚠️ Setup error: assignment \`$ASSIGN\` has no template in config."
+
+          SEM="$(jq -r --arg c "$COURSE" '.courses[$c].semester' "$CONFIG")"
+          # pattern is OPTIONAL — default uses {course} so a hand-edited config can't hardcode the wrong
+          # prefix (e.g. copying cs120's block for cs130). {course} is substituted from the parsed course.
+          PATTERN="$(jq -r --arg c "$COURSE" '.courses[$c].student_repo_pattern // "{course}-{semester}-{assignment}-{username}"' "$CONFIG")"
+          REPO="$PATTERN"
+          REPO="${REPO//\{course\}/$COURSE}"
+          REPO="${REPO//\{semester\}/$SEM}"
+          REPO="${REPO//\{assignment\}/$ASSIGN}"
+          REPO="${REPO//\{username\}/$UKEY}"
+
+          NAME="$(jq -r '.name' <<<"$ROSTER")"
+          EMAIL="$(jq -r '.email' <<<"$ROSTER")"
+
+          # --- create repo from template (idempotent); cross-repo → ORG_PAT ---
+          if GH_TOKEN="$ORG_PAT" gh repo view "$ORG/$REPO" >/dev/null 2>&1; then
+            EXISTED=1   # idempotent — repo already there, just return the existing link
+          else
+            EXISTED=0
+
+            # --- ACCESS CODE gate: quizzes/exams only (config entry has "requires_code": true) ---
+            # A time window does NOT protect a quiz. While it is open, any registered student can
+            # request the repo and read the questions days before sitting it — a private template
+            # does not help once the repo is theirs. Verified 2026-07-31 on AVC-CS: Q71..Q74 were
+            # plain always-open entries and one student already held all four. The code lives INSIDE
+            # the Canvas quiz, so only a student who actually started it can produce the value: the
+            # release trigger becomes the attempt, not the clock.
+            #
+            # The code is read from the PRIVATE admin repo (quiz-codes.json), the same ORG_PAT path
+            # the roster above already uses — a GET, so it takes no branch lock and cannot contend.
+            # ⛔ NOT a GitHub secret and NOT config.json:
+            #   · config.json lives in this PUBLIC repo — a code written there is published.
+            #   · a secret cannot be looked up by a name computed at run time, and the construct that
+            #     would allow it makes GitHub refuse to schedule the run at all (2026-07-31 outage;
+            #     it matches on the text, even inside a comment). See playbook/request.md.
+            # ⛔ Never echo EXPECTED — a repo file is NOT masked in logs the way a secret is.
+            #
+            # Checked HERE, inside the create branch, so a student who already has the repo is never
+            # asked again — a quiz is multi-attempt and they come back for the link.
+            if [ "$(jq -r 'if type=="object" then (.requires_code // false) else false end' <<<"$ENTRY")" = "true" ]; then
+              CODES="$(GH_TOKEN="$ORG_PAT" gh api "repos/$DATA_REPO/contents/quiz-codes.json" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)"
+              EXPECTED="$(jq -r --arg c "$COURSE" --arg a "$ASSIGN" '.[$c][$a] // empty' <<<"$CODES" 2>/dev/null || true)"
+              # Instructor fault, NOT the student's — say so distinctly, or a forgotten code entry
+              # reads exactly like every student mistyping.
+              [ -n "$EXPECTED" ] \
+                || fail "⚠️ Setup error: \`$ASSIGN\` needs an access code but none is on file for it yet. Tell your instructor — this is not your mistake."
+              [ -n "$CODE" ] && [ "$CODE" = "$EXPECTED" ] \
+                || fail "❌ Wrong or missing **access code** for \`$ASSIGN\`, so no repo was created. The code is inside the quiz on Canvas — open the quiz to see it, then submit a new request with that code."
+            fi
+
+            # Template must EXIST and be marked a template repo — `gh repo create --template` requires it.
+            # Check up front so a mis-set template reports the reason via fail(), instead of crashing under
+            # `set -e` at the create line (which left the issue silently Open with no comment).
+            # REST, not `gh repo view --json` (GraphQL): GraphQL has its own hourly quota, and when
+            # it is exhausted the call fails, `|| echo missing` turns that into "template not found",
+            # and the student is told their repo cannot be created — for a template that is present
+            # and correct. Happened 2026-07-20 02:09-02:10 PDT (3 students) after instructor tooling
+            # drained the shared token's GraphQL budget. REST carries a separate, far larger budget.
+            IS_TPL="$(GH_TOKEN="$ORG_PAT" gh api "repos/$ORG/$TEMPLATE" --jq '.is_template' 2>/dev/null || echo missing)"
+            case "$IS_TPL" in
+              true)  : ;;
+              false) fail "❌ Could not create your repo: \`$ORG/$TEMPLATE\` is not a template repository." ;;
+              *)     fail "❌ Could not create your repo: template \`$ORG/$TEMPLATE\` was not found." ;;
+            esac
+            GH_TOKEN="$ORG_PAT" gh repo create "$ORG/$REPO" --template "$ORG/$TEMPLATE" --private \
+              || fail "❌ Could not create your repo from \`$ORG/$TEMPLATE\`."
+          fi
+
+          # --- ensure student is an outside collaborator (push); sends invite ---
+          GH_TOKEN="$ORG_PAT" gh api -X PUT "repos/$ORG/$REPO/collaborators/$USERNAME" -f permission=push >/dev/null
+
+          # --- hand the log record to the PRIVATE data repo as an ISSUE, never a commit ---
+          # A commit takes a branch-head lock: concurrent requests read the same head, one wins, the
+          # rest get HTTP 409. On 2026-07-19 a deadline rush killed 21 runs right here — under set -e
+          # the student notification below never ran, so repo+invite had succeeded but the student was
+          # told nothing, retried, and amplified the contention. Issue creation takes NO lock.
+          # `log-build` (classroom-admin, manual) drains these issues into log/*.json in ONE commit.
+          # Never fatal: repo + invite already succeeded, so the student MUST still be notified.
+          STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LOG_JSON="$(jq -nc --arg t "$STAMP" --arg u "$UKEY" --arg n "$NAME" --arg e "$EMAIL" \
+                --arg c "$COURSE" --arg a "$ASSIGN" --arg s "$SEM" --arg r "$REPO" \
+                --arg url "https://github.com/$ORG/$REPO" \
+            '{time:$t, username:$u, name:$n, email:$e, course:$c, assignment:$a, semester:$s, repo:$r, url:$url}')"
+          GH_TOKEN="$ORG_PAT" gh issue create --repo "$DATA_REPO" \
+            --title "log: $REPO" --body "$LOG_JSON" >/dev/null \
+            || echo "::warning::log issue failed for $REPO — repo+invite OK, backfill later"
+
+          # rename the issue so the Closed list is self-identifying (each student sees their own)
+          gh issue edit "$ISSUE" --title "request-${COURSE}: ${ASSIGN} — @${USERNAME}" >/dev/null 2>&1 || true
+
+          if [ "${EXISTED:-0}" = "1" ]; then
+            LEAD='ℹ️ You already have this repo — returning your existing link (nothing new was created).'
+          else
+            LEAD='✅ Repo created.'
+          fi
+          MSG="$(printf '%s\nRepo: https://github.com/%s/%s\n👉 Accept the invite: https://github.com/%s/%s/invitations\nThen clone: `gh repo clone %s/%s`\n💡 Find this repo again anytime → My repos: https://github.com/%s/issues/new?template=03-myrepos.yml  (the invite is also in your email / github.com/notifications)' "$LEAD" "$ORG" "$REPO" "$ORG" "$REPO" "$ORG" "$REPO" "$GH_REPO")"
+          gh issue comment "$ISSUE" --body "$MSG"
+          gh issue close "$ISSUE"

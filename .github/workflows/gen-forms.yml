@@ -1,0 +1,44 @@
+name: gen-forms
+
+# ⚠️ Triggers/auto-writes: read playbook/automation-map.md before changing 'on:' or the commit-back.
+# Regenerates the request issue forms from config.json whenever it changes — so editing config from
+# ANYWHERE (clone / GitHub web UI / direct push) rebuilds this repo's forms. One config.json per repo
+# → only this school's courses → no pollution.
+#
+# Recursion-safe (two guards):
+#   1. commits with the default GITHUB_TOKEN → GitHub does NOT re-trigger workflows from it.
+#   2. triggers only on config.json; it writes .github/ISSUE_TEMPLATE/** (a different path) → no match.
+
+on:
+  push:
+    paths:
+      - config.json
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gen-forms-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gen-forms:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate forms from config.json
+        run: bash .github/scripts/gen-forms.sh
+
+      - name: Commit regenerated forms (only if changed)
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain .github/ISSUE_TEMPLATE)" ]; then
+            echo "forms already in sync — nothing to commit"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/ISSUE_TEMPLATE
+          git commit -m "gen-forms: regenerate request forms from config.json"
+          git push

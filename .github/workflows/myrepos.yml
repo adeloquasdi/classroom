@@ -1,0 +1,65 @@
+name: myrepos
+
+# ⚠️ Triggers/auto-writes: read playbook/automation-map.md before changing 'on:' or adding a commit-back.
+#    (GITHUB_TOKEN commits don't re-trigger workflows; ORG_PAT/PAT commits DO → loop risk.)
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write   # comment + close (read-only on the admin repo via ORG_PAT)
+
+concurrency:
+  group: myrepos-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  myrepos:
+    if: startsWith(github.event.issue.title, 'myrepos:')
+    runs-on: ubuntu-latest
+    steps:
+      - name: List the requester's repos (per course, sorted by assignment)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORG_PAT: ${{ secrets.ORG_PAT }}   # read the private admin log
+          GH_REPO: ${{ github.repository }}
+          ORG: ${{ github.repository_owner }}
+          ISSUE: ${{ github.event.issue.number }}
+          USERNAME: ${{ github.event.issue.user.login }}
+        run: |
+          set -euo pipefail
+          UKEY="$(printf '%s' "$USERNAME" | tr '[:upper:]' '[:lower:]')"
+          DATA_REPO="${GH_REPO}-admin"
+
+          # this user's log files = names ending in -<ukey>.json (repo name embeds the username)
+          NAMES="$(GH_TOKEN="$ORG_PAT" gh api "repos/$DATA_REPO/contents/log" --jq '.[].name' 2>/dev/null | grep -- "-${UKEY}\.json$" || true)"
+
+          # slurp the user's log objects into one JSON-lines file
+          TMP="$(mktemp)"
+          if [ -n "$NAMES" ]; then
+            while read -r name; do
+              [ -n "$name" ] || continue
+              GH_TOKEN="$ORG_PAT" gh api "repos/$DATA_REPO/contents/log/$name" --jq '.content' 2>/dev/null | base64 -d >> "$TMP" 2>/dev/null || true
+              printf '\n' >> "$TMP"
+            done <<< "$NAMES"
+          fi
+
+          COUNT="$(jq -rs 'length' "$TMP" 2>/dev/null || echo 0)"
+          BODY="$(mktemp)"
+          if [ "${COUNT:-0}" -gt 0 ]; then
+            {
+              printf 'Your repos (`%s`) — %s total:\n' "$UKEY" "$COUNT"
+              jq -rs 'map(.course) | unique | .[]' "$TMP" | while read -r course; do
+                [ -n "$course" ] || continue
+                printf '\n## %s\n\n| Assignment | Repo |\n|---|---|\n' "$course"
+                jq -rs --arg o "$ORG" --arg c "$course" \
+                  'map(select(.course==$c)) | sort_by(.assignment) | .[] | "| \(.assignment) | [\(.repo)](https://github.com/\($o)/\(.repo)) |"' "$TMP"
+              done
+            } > "$BODY"
+          else
+            printf "You don't have any repos yet. Request one from your Canvas course link first.\n" > "$BODY"
+          fi
+
+          gh issue comment "$ISSUE" --body-file "$BODY"
+          gh issue close "$ISSUE"

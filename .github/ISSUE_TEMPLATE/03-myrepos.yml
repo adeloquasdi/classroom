@@ -1,0 +1,17 @@
+name: My repos
+description: List every assignment repo you've requested (all courses).
+title: "myrepos: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### See all your repos
+        Check the box and **Submit**. You will get a comment listing every repo you have,
+	with links.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: List my repos
+      options:
+        - label: Show all repos I've requested
+          required: true

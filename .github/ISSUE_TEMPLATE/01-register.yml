@@ -1,0 +1,34 @@
+name: Register
+description: Register to request assignment repos. 
+title: "Registration"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Registration Form
+        You need to fill this form out once in order to associate your GitHub account
+	with the class roster. You will receive a confirmation comment after this form
+	is processed.
+  - type: input
+    id: fullname
+    attributes:
+      label: Name
+      description: Your full name
+      placeholder: e.g. Alice Kim
+    validations:
+      required: true
+  - type: input
+    id: email
+    attributes:
+      label: Email
+      description: Your school email
+      placeholder: e.g. alk128@utulsa.edu
+    validations:
+      required: true
+  - type: input
+    id: join_code
+    attributes:
+      label: Code
+      description: Auto-filled from the class link
+    validations:
+      required: true
