@@ -1,0 +1,19 @@
+name: Request a DS1043 repo
+description: Get your personal repo for a DS1043 assignment. Register first if you have not.
+title: "request-ds1043: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Request your DS1043 assignment repo
+        Pick the assignment. Not registered yet? Open the **Register** form first.
+  - type: dropdown
+    id: assignment
+    attributes:
+      label: Assignment
+      description: (Auto-generated from config.json — do not hand-edit.)
+      options:
+        - lab0
+        - lab1
+    validations:
+      required: true
