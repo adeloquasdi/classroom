@@ -57,7 +57,7 @@ jobs:
           CODE="$(field 'Access code')"
           if [ "$CODE" = "_No response_" ]; then CODE=""; fi
 
-          [ -n "$COURSE" ] || fail "❌ Could not read the course from the issue title. Use the course's Request link from Canvas."
+          [ -n "$COURSE" ] || fail "❌ Could not read the course from the issue title. Use the course's Request link from Harvey."
 
           # per-school deploy: this repo carries its OWN single config.json (stamped from the template)
           CONFIG="config.json"
@@ -70,7 +70,7 @@ jobs:
           DATA_REPO="${GH_REPO}-admin"
           ROSTER="$(GH_TOKEN="$ORG_PAT" gh api "repos/$DATA_REPO/contents/roster/$UKEY.json" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)"
           [ -n "$ROSTER" ] \
-            || fail "❌ You're not registered yet. Register first: https://github.com/$GH_REPO/issues/new?template=01-register.yml (use your Canvas class code), then request again."
+            || fail "❌ You're not registered yet. Register first: https://github.com/$GH_REPO/issues/new?template=01-register.yml (use your Harvey class code), then request again."
 
           # --- assignment must be in config; value = template string (always open) OR object with time gate ---
           ENTRY="$(jq -c --arg c "$COURSE" --arg a "$ASSIGN" '.courses[$c].assignments[$a] // empty' "$CONFIG")"
@@ -117,7 +117,7 @@ jobs:
             # request the repo and read the questions days before sitting it — a private template
             # does not help once the repo is theirs. Verified 2026-07-31 on AVC-CS: Q71..Q74 were
             # plain always-open entries and one student already held all four. The code lives INSIDE
-            # the Canvas quiz, so only a student who actually started it can produce the value: the
+            # the Harvey quiz, so only a student who actually started it can produce the value: the
             # release trigger becomes the attempt, not the clock.
             #
             # The code is read from the PRIVATE admin repo (quiz-codes.json), the same ORG_PAT path
@@ -139,7 +139,7 @@ jobs:
               [ -n "$EXPECTED" ] \
                 || fail "⚠️ Setup error: \`$ASSIGN\` needs an access code but none is on file for it yet. Tell your instructor — this is not your mistake."
               [ -n "$CODE" ] && [ "$CODE" = "$EXPECTED" ] \
-                || fail "❌ Wrong or missing **access code** for \`$ASSIGN\`, so no repo was created. The code is inside the quiz on Canvas — open the quiz to see it, then submit a new request with that code."
+                || fail "❌ Wrong or missing **access code** for \`$ASSIGN\`, so no repo was created. The code is inside the quiz on Harvey — open the quiz to see it, then submit a new request with that code."
             fi
 
             # Template must EXIST and be marked a template repo — `gh repo create --template` requires it.

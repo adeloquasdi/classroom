@@ -58,7 +58,7 @@ jobs:
               done
             } > "$BODY"
           else
-            printf "You don't have any repos yet. Request one from your Canvas course link first.\n" > "$BODY"
+            printf "You don't have any repos yet. Request one from your Harvey course link first.\n" > "$BODY"
           fi
 
           gh issue comment "$ISSUE" --body-file "$BODY"

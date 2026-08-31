@@ -60,7 +60,7 @@ jobs:
 
           # --- gate: class join code ---
           [ -n "$CODE" ] && [ "$CODE" = "$EXPECTED" ] || \
-            fail "❌ Registration failed: wrong or missing class **code**. Get it from your Canvas course page, then open a new Register issue."
+            fail "❌ Registration failed: wrong or missing class **code**. Get it from your Harvey course page, then open a new Register issue."
           [ -n "$NAME" ] && [ -n "$EMAIL" ] || \
             fail "❌ Registration failed: **name** and **email** are required."
 
@@ -95,5 +95,5 @@ jobs:
 
           # --- redact PII from the public issue body, confirm (username only), close (keeps record, no PII) ---
           gh issue edit "$ISSUE" --body "Registration processed — personal details redacted for privacy." >/dev/null
-          gh issue comment "$ISSUE" --body "✅ Registered as \`$UKEY\`. You can now request assignment repos from your Canvas course link."
+          gh issue comment "$ISSUE" --body "✅ Registered as \`$UKEY\`. You can now request assignment repos from your Harvey course link."
           gh issue close "$ISSUE"
