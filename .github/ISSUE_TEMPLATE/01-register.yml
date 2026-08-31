@@ -1,6 +1,6 @@
 name: Register
 description: Register to request assignment repos. 
-title: "Registration"
+title: "register:"
 body:
   - type: markdown
     attributes:
