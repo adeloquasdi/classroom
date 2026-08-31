@@ -7,8 +7,8 @@ body:
       value: |
         ### Registration Form
         You need to fill this form out once in order to associate your GitHub account
-	with the class roster. You will receive a confirmation comment after this form
-	is processed.
+        with the class roster. You will receive a confirmation comment after this form
+        is processed.
   - type: input
     id: fullname
     attributes:

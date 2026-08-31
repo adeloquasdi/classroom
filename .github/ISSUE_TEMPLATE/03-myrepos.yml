@@ -7,7 +7,7 @@ body:
       value: |
         ### See all your repos
         Check the box and **Submit**. You will get a comment listing every repo you have,
-	with links.
+        with links.
   - type: checkboxes
     id: confirm
     attributes:
