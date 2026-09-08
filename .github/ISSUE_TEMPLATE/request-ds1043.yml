@@ -15,5 +15,6 @@ body:
       options:
         - lab0
         - lab1
+        - lab2
     validations:
       required: true
