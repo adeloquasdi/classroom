@@ -8,7 +8,12 @@
         "lab1": {
           "template": "ds1043-lab1",
           "available_from": "2026-08-31T12:00:00-05:00"
+        },
+        "lab2": {
+          "template": "ds1043-lab2",
+          "available_from": "2026-09-08T07:00:00-05:00"
         }
+
       },
       "student_repo_pattern": "{course}-{semester}-{assignment}-{username}"
     }
