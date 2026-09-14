@@ -12,6 +12,10 @@
         "lab2": {
           "template": "ds1043-lab2",
           "available_from": "2026-09-08T07:00:00-05:00"
+        },
+        "lab3": {
+          "template": "ds1043-lab3",
+          "available_from": "2026-09-15T07:00:00-05:00"
         }
 
       },
