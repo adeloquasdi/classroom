@@ -24,6 +24,9 @@
         "lab5": {
           "template": "ds1043-lab5",
           "available_from": "2026-09-29T07:00:00-05:00"
+        },
+        "slices": {
+          "template": "slices"
         }
       },
       "student_repo_pattern": "{course}-{semester}-{assignment}-{username}"
