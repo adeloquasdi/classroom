@@ -19,5 +19,6 @@ body:
         - lab3
         - lab4
         - lab5
+        - slices
     validations:
       required: true
