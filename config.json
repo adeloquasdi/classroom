@@ -27,6 +27,10 @@
         },
         "slices": {
           "template": "slices"
+        },
+        "lab6": {
+          "template": "ds1043-lab6",
+          "available_from": "2026-10-13T07:00:00-05:00"
         }
       },
       "student_repo_pattern": "{course}-{semester}-{assignment}-{username}"
