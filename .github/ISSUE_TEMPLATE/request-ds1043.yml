@@ -21,6 +21,7 @@ body:
         - lab5
         - lab6
         - lab7
+        - lab8
         - slices
     validations:
       required: true
