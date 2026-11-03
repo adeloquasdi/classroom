@@ -23,5 +23,6 @@ body:
         - lab7
         - lab8
         - slices
+        - summarize
     validations:
       required: true
